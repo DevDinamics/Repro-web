@@ -1,0 +1,43 @@
+---
+import Player from '../components/Player.jsx';
+import { client } from '../lib/sanity.js';
+
+const query = `*[_type == "playlist"][0]{
+  items[]{
+    "type": _type,
+    title,
+    "videoUrl": videoFile.asset->url,
+    "imageUrl": imageFile.asset->url,
+    duration
+  }
+}`;
+
+const playlistData = await client.fetch(query);
+const playlistItems = playlistData?.items || [];
+---
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FitGo TV - En Vivo</title>
+    <style is:global>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000000;
+        }
+    </style>
+</head>
+<body>
+    <!-- Forzamos un contenedor relativo con z-index base bajo para el HTML -->
+    <main class="relative w-full h-full bg-black overflow-hidden z-1">
+        {/* client:only="react" obliga a Astro a saltarse el SSR y ejecutar React puramente en el navegador */}
+        <Player items={playlistItems} client:only="react" />
+    </main>
+</body>
+</html>
