@@ -3,8 +3,15 @@ import Player from '../components/Player.jsx';
 import { client } from '../lib/sanity.js';
 
 const query = `*[_type == "playlist"][0]{
-  items[]{
+  tiempoEspera,
+  videosMotivacionales[]{
     "type": _type,
+    title,
+    "videoUrl": videoFile.asset->url
+  },
+  comerciales[]{
+    "type": _type, 
+    "_type": _type,
     title,
     "videoUrl": videoFile.asset->url,
     "imageUrl": imageFile.asset->url,
@@ -13,7 +20,9 @@ const query = `*[_type == "playlist"][0]{
 }`;
 
 const playlistData = await client.fetch(query);
-const playlistItems = playlistData?.items || [];
+const videos = playlistData?.videosMotivacionales || [];
+const comerciales = playlistData?.comerciales || [];
+const tiempoEspera = playlistData?.tiempoEspera || 300;
 ---
 
 <!DOCTYPE html>
@@ -34,10 +43,13 @@ const playlistItems = playlistData?.items || [];
     </style>
 </head>
 <body>
-    <!-- Forzamos un contenedor relativo con z-index base bajo para el HTML -->
     <main class="relative w-full h-full bg-black overflow-hidden z-1">
-        {/* client:only="react" obliga a Astro a saltarse el SSR y ejecutar React puramente en el navegador */}
-        <Player items={playlistItems} client:only="react" />
+        <Player 
+          videos={videos} 
+          comerciales={comerciales} 
+          tiempoEspera={tiempoEspera} 
+          client:only="react" 
+        />
     </main>
 </body>
 </html>
