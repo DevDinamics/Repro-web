@@ -1,78 +1,83 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 export default function Player({ videos = [], comerciales = [], tiempoEspera = 300 }) {
-  if (!videos || videos.length === 0) {
-    return (
-      <div className="flex w-full h-[100dvh] items-center justify-center bg-black text-white font-sans">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
-          <p className="text-xl font-light tracking-widest text-slate-400 uppercase">Cargando Videos FitGo TV...</p>
-        </div>
-      </div>
-    );
-  }
-
+  // 1. TODOS los hooks deben ir siempre al inicio (nunca después de un return)
   const [currentVideoIndex, setCurrentVideoIndex] = useState(0);
   const [currentAdIndex, setCurrentAdIndex] = useState(0);
   const [adMode, setAdMode] = useState(false);
   const [proximoCorteAd, setProximoCorteAd] = useState(tiempoEspera);
-
-  const currentVideo = videos[currentVideoIndex];
-  const currentAd = comerciales.length > 0 ? comerciales[currentAdIndex] : null;
+  const [playTrigger, setPlayTrigger] = useState(0); // Fuerza el reinicio incluso si solo hay 1 video
 
   const videoRef = useRef(null);
   const adVideoRef = useRef(null);
   const containerRef = useRef(null);
 
-  // Sincronizar el tiempo de espera dinámico
+  // Asegurar que el índice nunca se salga de rango si cambia la lista de videos
+  const safeVideoIndex = videos.length > 0 ? currentVideoIndex % videos.length : 0;
+  const currentVideo = videos.length > 0 ? videos[safeVideoIndex] : null;
+  const currentAd = comerciales.length > 0 ? comerciales[currentAdIndex % comerciales.length] : null;
+
   useEffect(() => {
     setProximoCorteAd(tiempoEspera);
   }, [tiempoEspera]);
 
-  // Manejo de play/pause del video principal
-  useEffect(() => {
-    if (!videoRef.current) return;
-    if (!adMode) {
-      setTimeout(() => {
-        if (videoRef.current) videoRef.current.play().catch(err => console.log(err));
-      }, 50);
-    } else {
-      videoRef.current.pause();
+  // Función centralizada y segura para reproducir el video principal
+  const playMainVideo = useCallback(() => {
+    const videoEl = videoRef.current;
+    if (!videoEl || adMode) return;
+
+    const playPromise = videoEl.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((error) => {
+        console.warn("Reintentando reproducción automática:", error);
+        // Si falló por carga, reintentar en 1 segundo
+        setTimeout(() => {
+          if (videoRef.current && !adMode) {
+            videoRef.current.play().catch(() => {});
+          }
+        }, 1000);
+      });
     }
   }, [adMode]);
 
-  // Cambio de video principal en la lista
+  // Control único de cambio de video y modo publicidad
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.load();
-      setProximoCorteAd(tiempoEspera);
-      if (!adMode) videoRef.current.play().catch(err => console.log(err));
-    }
-  }, [currentVideoIndex]);
+    const videoEl = videoRef.current;
+    if (!videoEl || !currentVideo) return;
 
-  // Temporizador para la duración del comercial en pantalla
+    if (adMode) {
+      videoEl.pause();
+      try {
+        if (videoEl.webkitDisplayingFullscreen && videoEl.webkitExitFullscreen) {
+          videoEl.webkitExitFullscreen();
+        }
+      } catch (e) {}
+    } else {
+      playMainVideo();
+    }
+  }, [adMode, currentVideoIndex, playTrigger, currentVideo, playMainVideo]);
+
+  // Temporizador para comerciales
   useEffect(() => {
     if (!adMode || !currentAd) return;
 
-    if (currentAd.duration > 0) {
-      const durationMs = currentAd.duration * 1000;
+    const durationMs = currentAd.duration > 0 
+      ? currentAd.duration * 1000 
+      : currentAd.type === 'imageItem' ? 10000 : null;
+
+    if (durationMs) {
       const timer = setTimeout(() => {
         regresarAlVideoPrincipal();
       }, durationMs);
       return () => clearTimeout(timer);
-    } else if (currentAd.type === 'imageItem') {
-      const timer = setTimeout(() => {
-        regresarAlVideoPrincipal();
-      }, 10000);
-      return () => clearTimeout(timer);
     }
   }, [adMode, currentAdIndex, currentAd]);
 
-  // Forzar play en videos comerciales
+  // Reproducir video comercial
   useEffect(() => {
-    if (adMode && currentAd?.type === 'videoAdItem' && adVideoRef.current) {
-      adVideoRef.current.load();
-      adVideoRef.current.play().catch(err => console.log(err));
+    if (adMode && currentAd?.videoUrl && adVideoRef.current) {
+      adVideoRef.current.currentTime = 0;
+      adVideoRef.current.play().catch(err => console.warn("Error ad video:", err));
     }
   }, [adMode, currentAdIndex, currentAd]);
 
@@ -95,54 +100,49 @@ export default function Player({ videos = [], comerciales = [], tiempoEspera = 3
     }
   };
 
-  const handleMainVideoEnded = () => {
+  // Avanzar al siguiente video (o reiniciar desde el 0 al terminar los 4)
+  const avanzarSiguienteVideo = useCallback(() => {
     setAdMode(false);
     setProximoCorteAd(tiempoEspera);
-    setCurrentVideoIndex((prev) => (prev + 1) % videos.length);
-  };
 
-  const handleAdVideoEndedFallback = () => {
-    if (currentAd && (!currentAd.duration || currentAd.duration === 0)) {
-      regresarAlVideoPrincipal();
+    if (videos.length === 1 && videoRef.current) {
+      // Si solo hay 1 video, rebobinar manualmente a 0
+      videoRef.current.currentTime = 0;
+      setPlayTrigger(prev => prev + 1);
+    } else {
+      setCurrentVideoIndex((prev) => (prev + 1) % videos.length);
+      setPlayTrigger(prev => prev + 1);
     }
-  };
+  }, [videos.length, tiempoEspera]);
+
+  // Pantalla de carga segura (después de los hooks)
+  if (!videos || videos.length === 0) {
+    return (
+      <div className="flex w-full h-[100dvh] items-center justify-center bg-black text-white font-sans">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-500 mx-auto mb-4"></div>
+          <p className="text-xl font-light tracking-widest text-slate-400 uppercase">Cargando Videos...</p>
+        </div>
+      </div>
+    );
+  }
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
-
-    // 1. Verificamos si estamos en pantalla completa leyendo los estándares de TODOS los navegadores (Chrome, Safari, Firefox, Edge)
-    const isFullscreen = 
-      document.fullscreenElement || 
-      document.webkitFullscreenElement || 
-      document.mozFullScreenElement || 
-      document.msFullscreenElement;
-
+    const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
     if (!isFullscreen) {
-      // 2. Intentamos entrar a pantalla completa
-      if (containerRef.current.requestFullscreen) {
-        containerRef.current.requestFullscreen().catch(err => console.log("Error Fullscreen:", err));
-      } else if (containerRef.current.webkitRequestFullscreen) {
-        containerRef.current.webkitRequestFullscreen(); // Safari en iPad / Mac
-      } else if (videoRef.current && videoRef.current.webkitEnterFullscreen) {
-        // Fallback crítico para iOS: Si el iPad/iPhone no deja ampliar toda la pantalla, amplía directamente el reproductor nativo del video
-        videoRef.current.webkitEnterFullscreen();
-      }
+      containerRef.current.requestFullscreen?.().catch(() => {});
     } else {
-      // 3. Intentamos salir de pantalla completa
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      } else if (document.webkitExitFullscreen) {
-        document.webkitExitFullscreen(); // Safari
-      }
+      document.exitFullscreen?.();
     }
   };
+
   return (
     <div 
       ref={containerRef} 
       className="relative bg-black flex items-center justify-center select-none overflow-hidden"
       style={{ width: '100vw', height: '100dvh' }}
     >
-      
       {/* BOTÓN PANTALLA COMPLETA */}
       <button
         onClick={toggleFullscreen}
@@ -160,45 +160,40 @@ export default function Player({ videos = [], comerciales = [], tiempoEspera = 3
         </svg>
       </button>
 
-      {/* 1. VIDEO PRINCIPAL CONTENIDO */}
+      {/* 1. VIDEO PRINCIPAL */}
       {currentVideo && (
         <video
+          key={`${currentVideo.videoUrl}-${safeVideoIndex}`}
           ref={videoRef}
           src={currentVideo.videoUrl}
+          preload="auto"
           className="w-full h-full object-cover"
           style={{ 
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%', 
-            height: '100%', 
-            objectFit: 'cover',
-            display: adMode ? 'none' : 'block',
-            zIndex: 10 
+            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
+            objectFit: 'cover', display: adMode ? 'none' : 'block', zIndex: 10 
           }}
           autoPlay
           muted
+          playsInline
+          onCanPlay={playMainVideo}
           onTimeUpdate={handleTimeUpdate}
-          onEnded={handleMainVideoEnded}
-          playsInline 
+          onEnded={avanzarSiguienteVideo}
+          onError={() => {
+            console.error("Error cargando video, saltando al siguiente en 3s...");
+            setTimeout(avanzarSiguienteVideo, 3000);
+          }}
         />
       )}
 
-      {/* 2. CAPA DE PUBLICIDAD A PANTALLA COMPLETA */}
+      {/* 2. CAPA DE PUBLICIDAD */}
       {adMode && currentAd && (
         <div 
           className="bg-black flex items-center justify-center" 
-          style={{ 
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%', 
-            height: '100%', 
-            zIndex: 20 
-          }}
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 20 }}
         >
           {currentAd.videoUrl ? (
             <video
+              key={currentAd.videoUrl}
               ref={adVideoRef}
               src={currentAd.videoUrl}
               className="w-full h-full object-cover"
@@ -207,7 +202,10 @@ export default function Player({ videos = [], comerciales = [], tiempoEspera = 3
               autoPlay
               playsInline
               loop={currentAd.duration > 0}
-              onEnded={handleAdVideoEndedFallback}
+              onEnded={() => {
+                if (!currentAd.duration || currentAd.duration === 0) regresarAlVideoPrincipal();
+              }}
+              onError={regresarAlVideoPrincipal}
             />
           ) : (
             currentAd.imageUrl && (
@@ -221,7 +219,6 @@ export default function Player({ videos = [], comerciales = [], tiempoEspera = 3
           )}
         </div>
       )}
-
     </div>
   );
 }
