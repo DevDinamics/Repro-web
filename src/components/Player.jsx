@@ -73,7 +73,6 @@ export default function Player({ videos = [], comerciales = [], tiempoEspera = 3
     }
   }, [adMode, currentAdIndex, currentAd]);
 
-  // Reproducir video comercial
   useEffect(() => {
     if (adMode && currentAd?.videoUrl && adVideoRef.current) {
       adVideoRef.current.currentTime = 0;
